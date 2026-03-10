@@ -1,5 +1,28 @@
 importScripts('firestore.js');
 
+// Click extension icon → auto-start picker
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!tab.id) return;
+
+  // Check if user is authenticated
+  const result = await chrome.storage.local.get(['user_id', 'user_token', 'firebase_config']);
+  if (!result.user_id || !result.user_token || !result.firebase_config) {
+    // Not authenticated — open auth page
+    chrome.tabs.create({ url: 'http://localhost:5173/extension-auth' });
+    return;
+  }
+
+  try {
+    await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ['content.css'] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+  } catch {
+    // Already injected or restricted page
+  }
+  setTimeout(() => {
+    chrome.tabs.sendMessage(tab.id, { type: 'ACTIVATE_PICKER' });
+  }, 100);
+});
+
 // External messages from the web app (via externally_connectable)
 chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'BACKPACK_AUTH') {
@@ -86,10 +109,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Already injected or restricted page
         }
         setTimeout(() => {
-          chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_PICKER', packId: msg.packId });
+          chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_PICKER' });
         }, 100);
       }
       sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  if (msg.type === 'CAPTURE_TAB') {
+    chrome.tabs.captureVisibleTab(null, { format: 'png' }, (dataUrl) => {
+      sendResponse({ dataUrl });
     });
     return true;
   }

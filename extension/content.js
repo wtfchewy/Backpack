@@ -3,10 +3,11 @@ if (!window.__backpackInjected) {
 
   let isPickerActive = false;
   let currentTarget = null;
-  let packId = null;
   let overlay = null;
   let depthLocked = false;
   let hoverTarget = null;
+  let packDropdown = null;
+  let isShowingDropdown = false;
 
   // ─── URL Resolution ───────────────────────────────────────────────
 
@@ -362,14 +363,21 @@ if (!window.__backpackInjected) {
         if (rule.type === CSSRule.STYLE_RULE) {
           _dbgStyleRules++;
           const selectors = rule.selectorText.split(',').map(s => s.trim());
-          const matching = selectors.filter(sel => {
+
+          // Always include :root, html, body, * rules — they provide inherited styles & variables
+          const inheritedSelectors = [':root', 'html', 'body', '*'];
+          const isInherited = selectors.some(sel => {
+            const base = getBaseSelector(sel).trim();
+            return inheritedSelectors.includes(base);
+          });
+
+          const matching = isInherited ? selectors : selectors.filter(sel => {
             _dbgTestedSelectors++;
             const base = getBaseSelector(sel);
             if (!base) return false;
             try {
               const matched = selectorMatchesAny(base, elements);
               if (matched) _dbgMatchedSelectors++;
-              // Capture sample selectors for debugging
               if (_dbgSampleSelectors.length < 20 && _dbgStyleRules <= 30) {
                 _dbgSampleSelectors.push({ sel, base, matched });
               }
@@ -392,11 +400,16 @@ if (!window.__backpackInjected) {
           keyframeRules.push(rule.cssText);
         } else if (rule.type === CSSRule.MEDIA_RULE) {
           const inner = [];
+          const inheritedSelectors = [':root', 'html', 'body', '*'];
           try {
             for (const r of rule.cssRules) {
               if (r.type === CSSRule.STYLE_RULE) {
                 const sels = r.selectorText.split(',').map(s => s.trim());
-                const m = sels.filter(sel => {
+                const isInherited = sels.some(sel => {
+                  const base = getBaseSelector(sel).trim();
+                  return inheritedSelectors.includes(base);
+                });
+                const m = isInherited ? sels : sels.filter(sel => {
                   const base = getBaseSelector(sel);
                   return base && selectorMatchesAny(base, elements);
                 });
@@ -545,7 +558,7 @@ if (!window.__backpackInjected) {
     if (resolvedVars.length) parts.push(resolvedVars.join('\n'));
     if (keyframeRules.length) parts.push(keyframeRules.join('\n'));
     if (matchedRules.length) parts.push(matchedRules.join('\n'));
-    return parts.join('\n\n');
+    return { css: parts.join('\n\n'), matchedRules };
   }
 
   // Clean up broken CSS declarations (empty values from browser serialization)
@@ -762,7 +775,9 @@ if (!window.__backpackInjected) {
     });
 
     // ── Run extraction ──
-    let css = extractMatchingCSS(el);
+    const extracted = extractMatchingCSS(el);
+    let css = extracted.css;
+    const matchedRules = extracted.matchedRules;
     const cleanHTML = getCleanHTML(el);
 
     debug.rawCSS = {
@@ -777,21 +792,16 @@ if (!window.__backpackInjected) {
       preview: css?.substring(0, 500) || '(empty)',
     };
 
-    // Count actual style rules (not keyframes, not font-face, not body/wildcard-only)
-    const actualStyleRuleCount = css
-      ? (css.match(/\{[^}]*\}/g) || []).length -
-        (css.match(/@keyframes\s+[\w-]+\s*\{/g) || []).length * 2 -
-        (css.match(/@font-face\s*\{/g) || []).length -
-        (css.match(/\*\s*\{/g) || []).length -
-        (css.match(/body\s*\{/g) || []).length
-      : 0;
+    // Count component-specific matched rules (exclude inherited :root/html/body/* rules)
+    const inheritedPattern = /^(?:\*|:root|html|body)\s*\{/;
+    const componentRuleCount = matchedRules.filter(r => !inheritedPattern.test(r.trim())).length;
 
-    const needsFallback = actualStyleRuleCount < 3;
+    const needsFallback = componentRuleCount < 3;
 
     if (needsFallback) {
-      debug.fallback = 'COMPUTED STYLE INLINING — CSS extraction found too few rules (' + actualStyleRuleCount + ')';
+      debug.fallback = 'COMPUTED STYLE INLINING — CSS extraction found too few rules (' + componentRuleCount + ')';
       console.log('%c[Backpack]', 'color: #e17055; font-weight: bold',
-        'CSS extraction insufficient (' + actualStyleRuleCount + ' rules). Falling back to computed style inlining.');
+        'CSS extraction insufficient (' + componentRuleCount + ' rules). Falling back to computed style inlining.');
 
       // Clone the element again and inline computed styles
       const styledClone = el.cloneNode(true);
@@ -965,52 +975,334 @@ if (!window.__backpackInjected) {
   }
 
   function handleClick(e) {
-    if (!isPickerActive) return;
+    if (!isPickerActive || isShowingDropdown) return;
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
     if (!currentTarget) return;
 
-    const capturedHTML = buildCapturedHTML(currentTarget);
-    const rawHTML = getCleanHTML(currentTarget);
-    const background = findBackground(currentTarget.parentElement || currentTarget);
+    // Freeze the picker — keep highlight, stop hover updates
+    isShowingDropdown = true;
+    const selectedEl = currentTarget;
 
-    const rect = currentTarget.getBoundingClientRect();
+    // Remove hover/scroll listeners so the selection stays locked
+    document.removeEventListener('mouseover', handleMouseOver, true);
+    document.removeEventListener('mouseout', handleMouseOut, true);
+    document.removeEventListener('wheel', handleScroll, { capture: true });
+
+    // Update overlay text
+    if (overlay) {
+      overlay.innerHTML = 'Select a pack for this component<span>Press ESC to cancel</span>';
+    }
+
+    // Fetch packs and show dropdown
+    chrome.runtime.sendMessage({ type: 'GET_PACKS' }, (packs) => {
+      if (chrome.runtime.lastError || !packs) packs = [];
+      showPackDropdown(selectedEl, packs);
+    });
+  }
+
+  function showPackDropdown(selectedEl, packs) {
+    const rect = selectedEl.getBoundingClientRect();
+    const dropdownWidth = 220;
+    const viewW = window.innerWidth;
+
+    // Decide left or right
+    const spaceRight = viewW - rect.right;
+    const spaceLeft = rect.left;
+    let posLeft, posTop;
+
+    if (spaceRight >= dropdownWidth + 16) {
+      posLeft = rect.right + 12;
+    } else if (spaceLeft >= dropdownWidth + 16) {
+      posLeft = rect.left - dropdownWidth - 12;
+    } else {
+      // Center below
+      posLeft = Math.max(8, rect.left + (rect.width - dropdownWidth) / 2);
+    }
+    posTop = Math.max(8, rect.top);
+
+    // Clamp to viewport
+    if (posTop + 300 > window.innerHeight) {
+      posTop = Math.max(8, window.innerHeight - 320);
+    }
+
+    packDropdown = document.createElement('div');
+    packDropdown.className = '__backpack-dropdown';
+    packDropdown.style.left = posLeft + 'px';
+    packDropdown.style.top = posTop + 'px';
+    packDropdown.style.width = dropdownWidth + 'px';
+
+    // "All" option (no pack)
+    let html = `<div class="__backpack-dropdown-item" data-pack-id="">All</div>`;
+    for (const pack of packs) {
+      html += `<div class="__backpack-dropdown-item" data-pack-id="${pack.id}">${pack.name}</div>`;
+    }
+    packDropdown.innerHTML = html;
+    document.body.appendChild(packDropdown);
+
+    // Handle pack selection
+    packDropdown.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      const item = e.target.closest('.__backpack-dropdown-item');
+      if (!item) return;
+
+      const selectedPackId = item.dataset.packId || null;
+      saveAndAnimate(selectedEl, selectedPackId);
+    }, true);
+
+    // Handle clicking outside dropdown to cancel
+    setTimeout(() => {
+      document.addEventListener('click', handleDropdownOutsideClick, true);
+    }, 50);
+  }
+
+  function handleDropdownOutsideClick(e) {
+    if (packDropdown && packDropdown.contains(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    closeDropdown();
+    // Re-enable picker
+    isShowingDropdown = false;
+    document.addEventListener('mouseover', handleMouseOver, true);
+    document.addEventListener('mouseout', handleMouseOut, true);
+    document.addEventListener('wheel', handleScroll, { capture: true, passive: false });
+    if (overlay) {
+      overlay.innerHTML = 'Backpack Picker Active — scroll to resize selection, click to save<span>Press ESC to cancel</span>';
+    }
+  }
+
+  function closeDropdown() {
+    document.removeEventListener('click', handleDropdownOutsideClick, true);
+    if (packDropdown) {
+      packDropdown.remove();
+      packDropdown = null;
+    }
+  }
+
+  function saveAndAnimate(selectedEl, selectedPackId) {
+    closeDropdown();
+
+    // Build component data before removing highlight
+    const capturedHTML = buildCapturedHTML(selectedEl);
+    const rawHTML = getCleanHTML(selectedEl);
+    const background = findBackground(selectedEl.parentElement || selectedEl);
+    const rect = selectedEl.getBoundingClientRect();
 
     const component = {
       id: crypto.randomUUID(),
-      packId: packId,
-      name: currentTarget.className
-        ? currentTarget.className.toString().split(' ')[0].substring(0, 30)
-        : currentTarget.tagName.toLowerCase(),
-      tagName: `<${currentTarget.tagName.toLowerCase()}>`,
+      packId: selectedPackId,
+      name: selectedEl.className
+        ? selectedEl.className.toString().split(' ')[0].substring(0, 30)
+        : selectedEl.tagName.toLowerCase(),
+      tagName: `<${selectedEl.tagName.toLowerCase()}>`,
       html: capturedHTML,
       rawHtml: rawHTML,
-      styles: getComputedStylesJSON(currentTarget),
+      styles: getComputedStylesJSON(selectedEl),
       background: background,
       sourceUrl: window.location.href,
       capturedWidth: Math.round(rect.width),
-      capturedHeight: Math.round(Math.max(rect.height, currentTarget.scrollHeight)),
+      capturedHeight: Math.round(Math.max(rect.height, selectedEl.scrollHeight)),
       savedAt: Date.now(),
     };
 
-    chrome.runtime.sendMessage({ type: 'SAVE_COMPONENT', component }, () => {
-      if (chrome.runtime.lastError) { /* ignore */ }
-      showToast('Component saved to Backpack!');
-    });
+    // Remove highlight before capturing screenshot
+    selectedEl.classList.remove('__backpack-highlight');
+    selectedEl.removeAttribute('data-backpack-tag');
 
-    deactivatePicker();
+    // Hide overlay so it doesn't appear in the screenshot
+    if (overlay) overlay.style.display = 'none';
+
+    // Deactivate picker (but keep logo until animation finishes)
+    isPickerActive = false;
+    isShowingDropdown = false;
+    depthLocked = false;
+    hoverTarget = null;
+    currentTarget = null;
+
+    document.removeEventListener('mouseover', handleMouseOver, true);
+    document.removeEventListener('mouseout', handleMouseOut, true);
+    document.removeEventListener('wheel', handleScroll, { capture: true });
+    document.removeEventListener('click', handleClick, true);
+    document.removeEventListener('keydown', handleKeyDown, true);
+    document.removeEventListener('click', handleDropdownOutsideClick, true);
+
+    // Small delay to let the DOM repaint without highlight/overlay
+    requestAnimationFrame(() => {
+      chrome.runtime.sendMessage({ type: 'CAPTURE_TAB' }, (response) => {
+        // Remove overlay now that screenshot is taken
+        if (overlay) {
+          overlay.remove();
+          overlay = null;
+        }
+
+        const dataUrl = response && response.dataUrl;
+
+        // Save component
+        chrome.runtime.sendMessage({ type: 'SAVE_COMPONENT', component }, () => {
+          if (chrome.runtime.lastError) { /* ignore */ }
+        });
+
+        if (!dataUrl) {
+          if (logoEl) {
+            logoEl.classList.add('__backpack-logo-pulse');
+            setTimeout(() => {
+              if (logoEl) logoEl.classList.remove('__backpack-logo-pulse');
+              hideLogo();
+            }, 500);
+          } else {
+            hideLogo();
+          }
+          return;
+        }
+
+        // Crop the screenshot to the component bounds
+        const dpr = window.devicePixelRatio || 1;
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const cropX = Math.round(rect.left * dpr);
+          const cropY = Math.round(rect.top * dpr);
+          const cropW = Math.round(rect.width * dpr);
+          const cropH = Math.round(rect.height * dpr);
+          canvas.width = cropW;
+          canvas.height = cropH;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+          const croppedUrl = canvas.toDataURL('image/png');
+          runArcAnimation(croppedUrl, rect);
+        };
+        img.src = dataUrl;
+      });
+    });
+  }
+
+  function runArcAnimation(imageUrl, rect) {
+    const screenshot = document.createElement('div');
+    screenshot.style.cssText = `
+      position: fixed;
+      left: ${rect.left}px;
+      top: ${rect.top}px;
+      width: ${rect.width}px;
+      height: ${rect.height}px;
+      z-index: 2147483647;
+      pointer-events: none;
+      overflow: hidden;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(33, 215, 96, 0.3);
+      border: 2px solid #21d760;
+      background-image: url(${imageUrl});
+      background-size: cover;
+      background-position: center;
+    `;
+    document.body.appendChild(screenshot);
+
+    const logoRect = logoEl ? logoEl.getBoundingClientRect() : { left: window.innerWidth - 56, top: window.innerHeight - 56, width: 52, height: 52 };
+    const targetX = logoRect.left + logoRect.width / 2;
+    const targetY = logoRect.top + logoRect.height / 2;
+    const startX = rect.left + rect.width / 2;
+    const startY = rect.top + rect.height / 2;
+
+    const duration = 700;
+    const startTime = performance.now();
+
+    function easeInOutCubic(t) {
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    function animateFrame(now) {
+      const elapsed = now - startTime;
+      const rawT = Math.min(elapsed / duration, 1);
+      const t = easeInOutCubic(rawT);
+
+      const x = startX + (targetX - startX) * t;
+      const y = startY + (targetY - startY) * t;
+
+      // Arc upward in the middle using sine curve
+      const arcHeight = Math.min(300, Math.abs(targetY - startY) * 0.6 + 100);
+      const arcOffset = -Math.sin(t * Math.PI) * arcHeight;
+
+      // Scale down and fade
+      const scale = 1 - t * 0.85;
+      const w = rect.width * scale;
+      const h = rect.height * scale;
+      const opacity = 1 - t * 0.6;
+
+      screenshot.style.left = (x - w / 2) + 'px';
+      screenshot.style.top = (y + arcOffset - h / 2) + 'px';
+      screenshot.style.width = w + 'px';
+      screenshot.style.height = h + 'px';
+      screenshot.style.opacity = opacity;
+      screenshot.style.borderRadius = (12 + t * 40) + 'px';
+      screenshot.style.transform = `rotate(${t * -8}deg)`;
+
+      if (rawT < 1) {
+        requestAnimationFrame(animateFrame);
+      } else {
+        screenshot.remove();
+        if (logoEl) {
+          logoEl.classList.add('__backpack-logo-pulse');
+          setTimeout(() => {
+            if (logoEl) logoEl.classList.remove('__backpack-logo-pulse');
+            hideLogo();
+          }, 500);
+        } else {
+          hideLogo();
+        }
+      }
+    }
+
+    requestAnimationFrame(animateFrame);
   }
 
   function handleKeyDown(e) {
-    if (e.key === 'Escape' && isPickerActive) deactivatePicker();
+    if (e.key === 'Escape') {
+      if (isShowingDropdown) {
+        // Close dropdown, return to picker
+        closeDropdown();
+        isShowingDropdown = false;
+        document.addEventListener('mouseover', handleMouseOver, true);
+        document.addEventListener('mouseout', handleMouseOut, true);
+        document.addEventListener('wheel', handleScroll, { capture: true, passive: false });
+        if (overlay) {
+          overlay.innerHTML = 'Backpack Picker Active — scroll to resize selection, click to save<span>Press ESC to cancel</span>';
+        }
+      } else if (isPickerActive) {
+        deactivatePicker();
+      }
+    }
   }
 
-  function activatePicker(targetPackId) {
+  let logoEl = null;
+
+  const BACKPACK_LOGO_SVG = `<svg viewBox="0 0 190.73 190.72" xmlns="http://www.w3.org/2000/svg" width="32" height="32"><defs><style>.bp-1{fill-rule:evenodd;fill:#ffffff}.bp-2{fill:#ffffff}</style></defs><g><path class="bp-1" d="M161.88,162.13c-4.21,12.41-13.95,22.15-26.36,26.36-6.6,2.24-14.51,2.24-26.92,2.24h-26.48c-12.4,0-20.32,0-26.92-2.24-12.4-4.21-22.15-13.95-26.36-26.36-.78-2.31-1.29-4.77-1.62-7.53-.49-4.12-.74-6.18.3-8.45,1.04-2.27,2.93-3.54,6.71-6.09,17.59-11.83,36.24-20.3,61.13-20.3,21.7,0,46.56,8.64,62.73,20.85,2.81,2.12,4.21,3.18,5.14,5.31.93,2.13.75,3.93.39,7.53-.32,3.24-.86,6.07-1.75,8.69Z"/><path class="bp-1" d="M95.14,0h.45c3.94,0,7.23,0,9.94.18,2.81.19,5.47.61,8.05,1.67,5.98,2.48,10.73,7.22,13.2,13.2,1.07,2.58,1.48,5.23,1.67,8.05.18,2.7.18,5.99.18,9.94h0v2.14c21.16,11.72,35.48,34.28,35.48,60.18v25.63c0,3.07,0,4.6-.92,5.11-.92.5-2.25-.35-4.91-2.06-17.24-11.07-39.2-17.6-62.92-17.6s-45.67,6.52-62.92,17.6c-2.66,1.71-3.99,2.56-4.91,2.06-.92-.5-.92-2.04-.92-5.11h0v-25.63c0-25.9,14.32-48.46,35.48-60.18v-2.14c0-3.94,0-7.23.18-9.94.19-2.81.61-5.47,1.67-8.05,2.48-5.98,7.22-10.73,13.2-13.2,2.58-1.07,5.23-1.48,8.05-1.67C87.9,0,91.2,0,95.14,0h0ZM115.17,24.01c.1,1.48.14,3.25.15,5.54-6.32-1.91-13.01-2.94-19.95-2.94s-13.64,1.03-19.95,2.94c.01-2.29.05-4.06.15-5.54.15-2.14.41-3.18.69-3.86,1.13-2.72,3.28-4.88,6-6,.68-.28,1.72-.54,3.86-.69,2.2-.15,5.03-.15,9.26-.15s7.06,0,9.26.15c2.14.15,3.17.41,3.86.69,2.72,1.13,4.88,3.28,6,6,.28.68.55,1.72.69,3.86ZM86.49,70.97c-3.67,0-6.65,2.98-6.65,6.65s2.98,6.65,6.65,6.65h17.74c3.67,0,6.65-2.98,6.65-6.65s-2.98-6.65-6.65-6.65h-17.74Z"/><path class="bp-2" d="M15.52,136.66v-27.53c0-2.9,0-4.34-1.07-4.81-1.07-.46-2.05.46-4.01,2.31-6.43,6.07-10.45,14.67-10.45,24.2v11.41c0,8.65,5.02,16.12,12.3,19.67,2.09,1.02,3.13,1.52,4,.89s.65-1.99.23-4.69c-1.02-6.46-1.01-13.58-1.01-21.44Z"/><path class="bp-2" d="M175.2,136.66c0,7.86.01,14.98-1.01,21.44-.42,2.7-.64,4.05.23,4.69.86.64,1.91.13,4-.89,7.28-3.55,12.3-11.02,12.3-19.67v-11.41c0-9.54-4.01-18.14-10.44-24.2-1.96-1.85-2.94-2.77-4.01-2.31s-1.07,1.91-1.07,4.81v27.53Z"/></g></svg>`;
+
+  function showLogo() {
+    if (logoEl) return;
+    logoEl = document.createElement('div');
+    logoEl.className = '__backpack-logo';
+    logoEl.innerHTML = BACKPACK_LOGO_SVG;
+    document.body.appendChild(logoEl);
+  }
+
+  function hideLogo() {
+    if (logoEl) {
+      logoEl.remove();
+      logoEl = null;
+    }
+  }
+
+  function activatePicker() {
     isPickerActive = true;
+    isShowingDropdown = false;
     depthLocked = false;
     hoverTarget = null;
-    packId = targetPackId;
+
+    showLogo();
 
     overlay = document.createElement('div');
     overlay.className = '__backpack-overlay';
@@ -1026,8 +1318,12 @@ if (!window.__backpackInjected) {
 
   function deactivatePicker() {
     isPickerActive = false;
+    isShowingDropdown = false;
     depthLocked = false;
     hoverTarget = null;
+
+    closeDropdown();
+    hideLogo();
 
     if (currentTarget) {
       currentTarget.classList.remove('__backpack-highlight');
@@ -1044,6 +1340,7 @@ if (!window.__backpackInjected) {
     document.removeEventListener('wheel', handleScroll, { capture: true });
     document.removeEventListener('click', handleClick, true);
     document.removeEventListener('keydown', handleKeyDown, true);
+    document.removeEventListener('click', handleDropdownOutsideClick, true);
   }
 
   function showToast(msg) {
@@ -1057,7 +1354,7 @@ if (!window.__backpackInjected) {
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'ACTIVATE_PICKER') {
       if (isPickerActive) deactivatePicker();
-      else activatePicker(msg.packId);
+      else activatePicker();
     }
   });
 }
