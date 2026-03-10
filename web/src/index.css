@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "puffin", "klavika-web", system-ui, -apple-system, sans-serif;
+  --font-display: "puffin", "klavika-web-condensed", "klavika-web", sans-serif;
+  --color-primary: #21d760;
+  --color-primary-content: #000000;
+  --color-primary-dark: #1aab4c;
+  --color-primary-light: #48e37e;
+
+  --color-secondary: #213dd7;
+  --color-secondary-content: #f9fafe;
+  --color-secondary-dark: #1a30ab;
+  --color-secondary-light: #4860e3;
+
+  --color-background: #1a1a1a;
+  --color-foreground: #262626;
+  --color-border: #404040;
+
+  --color-copy: #fbfbfb;
+  --color-copy-light: #d9d9d9;
+  --color-copy-lighter: #a6a6a6;
+
+  --color-success: #21d721;
+  --color-warning: #d7d721;
+  --color-error: #d72121;
+  --color-success-content: #000000;
+  --color-warning-content: #000000;
+  --color-error-content: #fef9f9;
+}
+
+* {
+  font-family: var(--font-sans);
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-background);
+  color: var(--color-copy);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Canvas */
+.canvas-bg {
+  user-select: none;
+}
+
+/* Dot grid background — used on all pages */
+.dot-grid {
+  background-image: radial-gradient(circle, var(--color-border) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0.5;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-copy-lighter);
+}
