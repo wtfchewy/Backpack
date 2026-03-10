@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Copy, Check, Code, Trash2, ExternalLink, GripVertical, Download, MousePointerClick, PackagePlus, Chrome } from 'lucide-react'
+import { Trash2, ExternalLink, GripVertical, MousePointerClick, PackagePlus, Chrome } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { getAllComponents, getPacks, deleteComponent } from '../store'
 import ComponentPreview from '../components/ComponentPreview'
@@ -222,7 +222,7 @@ export default function Canvas({ filterPack, filterSite }) {
       >
         {filtered.length === 0 ? (
           <div
-            className="absolute flex flex-col items-center text-center"
+            className="absolute flex flex-col items-center text-center fade-in-up"
             style={{ left: 'calc(50vw - 180px)', top: 'calc(50vh - 180px)', width: 360 }}
           >
             <div className="flex items-center gap-2.5 mb-2">
@@ -312,129 +312,72 @@ export default function Canvas({ filterPack, filterSite }) {
 }
 
 function ComponentCard({ component, pack, x, y, width, previewHeight, isDragging, onDragStart, onDelete }) {
-  const [copied, setCopied] = useState(false)
-  const [showCode, setShowCode] = useState(false)
   const [hovered, setHovered] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
-  function handleCopy(e) {
+  function handleDelete(e) {
     e.stopPropagation()
-    navigator.clipboard.writeText(component.html)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    setDeleting(true)
+    setTimeout(() => onDelete(), 350)
   }
 
-  let hostname = ''
-  try {
-    hostname = new URL(component.sourceUrl || '').hostname.replace('www.', '')
-  } catch { /* */ }
+  const toolbarW = 40
 
   return (
     <div
       style={{
         position: 'absolute',
-        left: x,
+        left: x - toolbarW - 8,
         top: y,
-        width,
+        width: width + toolbarW + 8,
         zIndex: isDragging ? 100 : hovered ? 50 : 1,
       }}
+      className={deleting ? 'card-deleting' : ''}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setShowCode(false) }}
+      onMouseLeave={() => setHovered(false)}
     >
-      <div
-        className={`relative rounded-2xl overflow-hidden border bg-foreground transition-all duration-200 ${isDragging
-          ? 'border-primary/50 shadow-2xl shadow-primary/10 scale-[1.02]'
-          : 'border-border shadow-lg shadow-black/20 hover:border-copy-lighter/30 hover:shadow-xl hover:shadow-black/30'
-          }`}
-      >
-        {/* Drag handle — top-left corner, only visible on hover */}
+      <div className="flex items-start gap-2">
+        {/* Left toolbar — outside the card */}
         <div
-          onPointerDown={onDragStart}
-          className={`absolute top-2 left-2 z-20 p-1 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10 transition-opacity duration-150 ${hovered && !isDragging ? 'opacity-100' : isDragging ? 'opacity-100' : 'opacity-0'
-            }`}
-          style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+          className={`flex flex-col gap-1.5 shrink-0 transition-opacity duration-150 ${hovered || isDragging ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+          style={{ width: toolbarW }}
         >
-          <GripVertical size={14} className="text-white/80" />
-        </div>
-
-        {/* Preview at captured size — interactive */}
-        <div className="relative overflow-hidden rounded-2xl" style={{ height: previewHeight }}>
-          <ComponentPreview html={component.html} background={component.background} minHeight={0} fill />
-        </div>
-      </div>
-
-      {/* Info bar — extends below the card on hover */}
-      <div
-        className="overflow-hidden transition-all duration-200 ease-out"
-        style={{
-          maxHeight: hovered ? 200 : 0,
-          opacity: hovered ? 1 : 0,
-        }}
-      >
-        <div className="mt-1 rounded-xl border border-border bg-foreground/95 backdrop-blur-md shadow-lg shadow-black/20 px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-semibold text-copy truncate">
-                {component.name || component.tagName}
-              </p>
-              <div className="flex items-center gap-2 mt-0.5">
-                {pack && (
-                  <span className="text-[11px] text-copy-lighter font-medium">{pack.name}</span>
-                )}
-                {pack && hostname && <span className="text-[11px] text-copy-lighter/50">·</span>}
-                {hostname && (
-                  <span className="text-[11px] text-copy-lighter">{hostname}</span>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-0.5">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setShowCode(!showCode)
-                }}
-                className={`p-1.5 rounded-lg cursor-pointer border-none transition-colors ${showCode ? 'bg-primary/10 text-primary' : 'bg-transparent text-copy-lighter hover:text-copy'
-                  }`}
-              >
-                <Code size={14} />
-              </button>
-              <button
-                onClick={handleCopy}
-                className="p-1.5 rounded-lg text-copy-lighter hover:text-copy cursor-pointer bg-transparent border-none transition-colors"
-              >
-                {copied ? <Check size={14} className="text-primary" /> : <Copy size={14} />}
-              </button>
-              {component.sourceUrl && (
-                <a
-                  href={component.sourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-1.5 rounded-lg text-copy-lighter hover:text-copy transition-colors"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <ExternalLink size={14} />
-                </a>
-              )}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onDelete()
-                }}
-                className="p-1.5 rounded-lg text-copy-lighter hover:text-error cursor-pointer bg-transparent border-none transition-colors"
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
+          <div
+            onPointerDown={onDragStart}
+            className="p-1.5 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10 transition-colors flex items-center justify-center"
+            style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+          >
+            <GripVertical size={14} className="text-white/80" />
           </div>
-
-          {/* Code panel */}
-          {showCode && (
-            <div className="mt-2 pt-2 border-t border-border max-h-48 overflow-auto">
-              <pre className="text-[11px] text-copy-light font-mono m-0 whitespace-pre-wrap break-all">
-                <code>{component.html}</code>
-              </pre>
-            </div>
+          {component.sourceUrl && (
+            <a
+              href={component.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-1.5 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10 text-white/80 hover:text-white transition-colors flex items-center justify-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ExternalLink size={14} />
+            </a>
           )}
+          <button
+            onClick={handleDelete}
+            className="p-1.5 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10 text-white/80 hover:text-error cursor-pointer transition-colors flex items-center justify-center"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+
+        {/* Card */}
+        <div
+          className={`flex-1 min-w-0 rounded-2xl overflow-hidden border bg-foreground transition-all duration-200 ${isDragging
+            ? 'border-primary/50 shadow-2xl shadow-primary/10 scale-[1.02]'
+            : 'border-border shadow-lg shadow-black/20 hover:border-copy-lighter/30 hover:shadow-xl hover:shadow-black/30'
+            }`}
+        >
+          <div className="relative overflow-hidden rounded-2xl" style={{ height: previewHeight }}>
+            <ComponentPreview html={component.html} background={component.background} minHeight={0} fill />
+          </div>
         </div>
       </div>
     </div>

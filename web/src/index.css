@@ -58,6 +58,27 @@ body {
   opacity: 0.5;
 }
 
+/* Card delete — macOS poof-style */
+@keyframes card-poof {
+  0%   { transform: scale(1); }
+  15%  { transform: scale(1.05); }
+  100% { transform: scale(0); }
+}
+.card-deleting {
+  animation: card-poof 0.35s cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  pointer-events: none;
+}
+
+/* Empty state fade-in */
+@keyframes fade-in-up {
+  0%   { opacity: 0; transform: translateY(12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.fade-in-up {
+  animation: fade-in-up 0.5s ease-out forwards;
+  opacity: 0;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
