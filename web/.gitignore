@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 
 .env
+.DS_Store
+.firebaserc
+bun.lock
+firebase.json
+.firebase/
