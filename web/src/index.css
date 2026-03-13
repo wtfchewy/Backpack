@@ -3,10 +3,10 @@
 @theme {
   --font-sans: "puffin", "klavika-web", system-ui, -apple-system, sans-serif;
   --font-display: "puffin", "klavika-web-condensed", "klavika-web", sans-serif;
-  --color-primary: #21d760;
+  --color-primary: #ffffff;
   --color-primary-content: #000000;
-  --color-primary-dark: #1aab4c;
-  --color-primary-light: #48e37e;
+  --color-primary-dark: #d9d9d9;
+  --color-primary-light: #ffffff;
 
   --color-secondary: #213dd7;
   --color-secondary-content: #f9fafe;

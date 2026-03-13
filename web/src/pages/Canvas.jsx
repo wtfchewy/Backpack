@@ -20,7 +20,9 @@ function layoutCards(components, maxRowWidth) {
 
   for (const comp of components) {
     const w = comp.capturedWidth || FALLBACK_W
-    const h = (comp.capturedHeight || FALLBACK_H) + PREVIEW_PAD
+    const iframeW = w + PREVIEW_PAD
+    const scale = Math.min(w / iframeW, 1)
+    const h = ((comp.capturedHeight || FALLBACK_H) + PREVIEW_PAD) * scale
 
     if (x + w > maxRowWidth && x > GAP) {
       x = GAP
@@ -287,7 +289,9 @@ export default function Canvas({ filterPack, filterSite }) {
           resolvedPositions.map((pos, i) => {
             const comp = filtered[i]
             const cardW = comp.capturedWidth || FALLBACK_W
-            const cardH = (comp.capturedHeight || FALLBACK_H) + PREVIEW_PAD
+            const iframeW = cardW + PREVIEW_PAD
+            const scale = Math.min(cardW / iframeW, 1)
+            const cardH = ((comp.capturedHeight || FALLBACK_H) + PREVIEW_PAD) * scale
 
             return (
               <ComponentCard
@@ -297,7 +301,7 @@ export default function Canvas({ filterPack, filterSite }) {
                 x={pos.x}
                 y={pos.y}
                 width={cardW}
-                previewHeight={cardH}
+
                 isDragging={dragId === comp.id}
                 onDragStart={(e) => onCardDragStart(e, comp.id, pos.x, pos.y)}
                 onDelete={() => handleDelete(comp.id)}
@@ -311,7 +315,7 @@ export default function Canvas({ filterPack, filterSite }) {
   )
 }
 
-function ComponentCard({ component, pack, x, y, width, previewHeight, isDragging, onDragStart, onDelete }) {
+function ComponentCard({ component, pack, x, y, width, isDragging, onDragStart, onDelete }) {
   const [hovered, setHovered] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
@@ -375,8 +379,8 @@ function ComponentCard({ component, pack, x, y, width, previewHeight, isDragging
             : 'border-border shadow-lg shadow-black/20 hover:border-copy-lighter/30 hover:shadow-xl hover:shadow-black/30'
             }`}
         >
-          <div className="relative overflow-hidden rounded-2xl" style={{ height: previewHeight }}>
-            <ComponentPreview html={component.html} background={component.background} minHeight={0} fill />
+          <div className="relative overflow-hidden rounded-2xl">
+            <ComponentPreview html={component.html} background={component.background} capturedWidth={component.capturedWidth} minHeight={0} />
           </div>
         </div>
       </div>
