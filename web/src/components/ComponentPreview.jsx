@@ -67,7 +67,25 @@ export default function ComponentPreview({ html, background, capturedWidth, minH
     }
   </style>
 </head>
-<body><div style="padding: 24px">${bodyContent}</div></body>
+<body><div style="padding: 24px">${bodyContent}</div>
+<script>
+  // Strip all navigation: links, buttons with formaction, form submits
+  document.addEventListener('click', function(e) {
+    var el = e.target.closest('a[href], button[formaction], [onclick]');
+    if (el) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  document.addEventListener('submit', function(e) {
+    e.preventDefault();
+  }, true);
+  // Remove href attributes so middle-click / right-click-open also can't navigate
+  document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('a[href]').forEach(function(a) {
+      a.removeAttribute('href');
+      a.style.cursor = 'default';
+    });
+  });
+</script>
+</body>
 </html>`
   }, [html, bgStyles])
 
@@ -139,6 +157,7 @@ export default function ComponentPreview({ html, background, capturedWidth, minH
         <iframe
           ref={iframeRef}
           srcDoc={srcdoc}
+          sandbox="allow-same-origin allow-scripts"
           title="Component preview"
           style={{
             position: 'absolute',
@@ -163,6 +182,7 @@ export default function ComponentPreview({ html, background, capturedWidth, minH
       <iframe
         ref={iframeRef}
         srcDoc={srcdoc}
+        sandbox="allow-same-origin allow-scripts"
         title="Component preview"
         className="w-full border-none bg-transparent"
         style={{ height: `${height}px`, minHeight: `${minHeight}px` }}
